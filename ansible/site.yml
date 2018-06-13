@@ -1,0 +1,9 @@
+---
+- name: Install Nginx and Flask
+  hosts: all
+  remote_user: ec2-user
+  become: yes
+  become_method: sudo
+
+  roles:
+    - nginx

@@ -1,0 +1,10 @@
+---
+- name: Install nginx
+  yum: name=nginx state=present
+  - name: Copy nginx config for flask proxy 
+    template: src=default.conf dest=/ect/nginx/conf.d/default.conf
+    notify: restart nginx
+  - name: Copy health check file over
+    template: src=health.html dest=/var/www/public_html/health.html
+  - name: Copy index file over
+    template: src=health.html dest=/var/www/public_html/index.html
