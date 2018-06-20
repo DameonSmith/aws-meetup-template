@@ -1,0 +1,6 @@
+---
+app:
+  project_name: visitly
+  user: SOMETHING #FIXME:
+  project_dir: /home/{{app.user}}/{{app.project_name}}/
+git_repo:
