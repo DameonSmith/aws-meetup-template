@@ -5,24 +5,21 @@
     name: pipenv
 - name: Pulldown Flask Code
   git:
-    repo: '{{ git_repo }}'
+    repo: '{{ git_repo.url }}'
     dest: '{{ app.project_dir }}'
 - name: Install python requirements
   command: chdir={{ app.project_dir }} pipenv install
+- name:
 - name: Install nginx
   yum: name=nginx state=present
-  - name: Copy nginx config for flask proxy 
-    template: src=dev-ops-demo.j2 dest=/ect/nginx/sites-available/dev-ops-demo
-    notify: restart nginx
-  - name: Copy health check file over
-    copy: 
-      src: health.html 
-      dest: /var/www/public_html/health.html
-  - name: Copy index file over
-    copy: 
-      src: health.html 
-      dest: /var/www/public_html/index.html
-  - name: Link sites available to sites enableed
-    command: ln -s /etc/nginx/sites-available/{{ app.project_name }} /etc/nginx/sites-enabled
-
-
+- name: Copy nginx config for flask proxy 
+  template: src=dev-ops-demo.conf.j2 dest=/ect/nginx/conf.d/dev-ops-demo.conf
+  notify: restart nginx
+- name: Copy health check file over
+  copy: 
+    src: health.html 
+    dest: /var/www/public_html/health.html
+- name: Copy index file over
+  copy: 
+    src: health.html 
+    dest: /var/www/public_html/index.html
