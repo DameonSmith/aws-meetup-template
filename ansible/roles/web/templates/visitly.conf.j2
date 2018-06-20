@@ -1,0 +1,11 @@
+description "uWSGI server instance configured to serve {{app.project_name}}"
+
+start on runlevel [2345]
+stop on runlevel [!2345]
+
+setuid {{app.user}}
+setgid www-data
+
+Environment="PATH={{ hostvars.host.ansible_local.venv.path }}/bin"
+chdir {{ app.project_dir }}
+ExecStart={{ hostvars.host.ansible_local.venv.path}}/bin/uwsgi --ini {{ app.project_name }}.ini
