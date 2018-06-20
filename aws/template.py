@@ -142,7 +142,7 @@ def main():
         "nginxTargetGroup", 
         t,
         HealthCheckIntervalSeconds=30,
-        HealthCheckPath="/health.html",
+        HealthCheckPath="/health/health.html",
         HealthCheckPort=80,
         HealthCheckProtocol="HTTP",
         HealthCheckTimeoutSeconds=90,
