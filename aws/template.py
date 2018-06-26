@@ -8,7 +8,7 @@ from troposphere import Ref, GetAtt, FindInMap, GetAZs
 
 def addMapping(template):
     template.add_mapping("RegionMap", {
-        "us-east-1": {"AMI": "ami-97785bed"},
+        "us-east-1": {"AMI": "ami-a4dc46db"},
     })
 
 def main():
@@ -142,7 +142,7 @@ def main():
         "nginxTargetGroup", 
         t,
         HealthCheckIntervalSeconds=30,
-        HealthCheckPath="/health/health.html",
+        HealthCheckPath="/health",
         HealthCheckPort=80,
         HealthCheckProtocol="HTTP",
         HealthCheckTimeoutSeconds=90,
