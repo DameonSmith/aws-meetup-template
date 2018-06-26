@@ -43,6 +43,7 @@ def main():
         MapPublicIpOnLaunch=True,
         VpcId=vpc_id,
     )
+    priv_subnet_id = Ref(priv_subnet)
 
     # NETWORKING
     igw = ec2.InternetGateway("internetGateway", t)
@@ -103,6 +104,7 @@ def main():
         t,
         GroupName="WebGroup",
         GroupDescription="Allow web traffic in from internet to ELB",
+        VpcId=vpc_id,
         SecurityGroupIngress=[
             http_ingress
         ])
@@ -111,6 +113,7 @@ def main():
         t,
         GroupName="SSHGroup",
         GroupDescription="Allow SSH traffic in from internet",
+        VpcId=vpc_id,
         SecurityGroupIngress=[
             ssh_ingress
         ]
@@ -121,6 +124,7 @@ def main():
     autoscale_ingress = {
         "SourceSecurityGroupId": elb_sg_id,
         "Description": "Allow web traffic in from ELB",
+        "IpProtocol": "tcp",
         "FromPort": 80,
         "ToPort": 80
     }
@@ -129,6 +133,7 @@ def main():
         t,
         GroupName="AutoscaleGroup",
         GroupDescription="Allow web traffic in from elb on port 80",
+        VpcId=vpc_id,
         SecurityGroupIngress=[
             autoscale_ingress
         ]
@@ -141,22 +146,19 @@ def main():
         "nginxElb",
         t,
         Name="nginxElb",
-        Subnets=[pub_subnet_id],
+        Subnets=[pub_subnet_id, priv_subnet_id],
         SecurityGroups=[elb_sg_id]
     )
 
     nginx_target_group = elb.TargetGroup(
         "nginxTargetGroup", 
         t,
-        HealthCheckIntervalSeconds=30,
+        DependsOn=nginx_elb,
         HealthCheckPath="/health",
         HealthCheckPort=80,
         HealthCheckProtocol="HTTP",
-        HealthCheckTimeoutSeconds=90,
-        HealthyThresholdCount=4,
-        UnhealthyThresholdCount=3,
         Matcher=elb.Matcher(HttpCode="200"),
-        Name="Nginx Target Group",
+        Name="NginxTargetGroup",
         Port=80,
         Protocol="HTTP",
         VpcId=vpc_id
@@ -196,16 +198,18 @@ def main():
             "DeviceName": "/dev/sdk",
             "Ebs": {"VolumeSize": "10"}
         }],
-        UserData= lc_user_data
+        UserData= lc_user_data,
+        KeyName="advanced-cfn"
     )
 
     nginx_autoscaler = autoscaling.AutoScalingGroup(
         "nginxAutoScaler",
+        t,
         LaunchConfigurationName=Ref(nginx_launch_config),
         MinSize="2",
         MaxSize="2",
-        AvailabilityZones=GetAZs(""),
-        TargetGroupARNs=Ref(nginx_target_group)
+        VPCZoneIdentifier=[priv_subnet_id, pub_subnet_id],
+        TargetGroupARNs= [Ref(nginx_target_group)]
     )
 
     t.add_output([
