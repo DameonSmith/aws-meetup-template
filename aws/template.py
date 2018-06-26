@@ -181,6 +181,7 @@ def main():
     #TODO: Add user data to install nginx and ansible 
     lc_user_data = Base64(Join("\n",
     [
+        "#!/bin/bash",
         "sudo apt-add-repository ppa:ansible/ansible",
         "sudo apt-get update && sudo apt-get upgrade",
         "sudo apt-get install git",
