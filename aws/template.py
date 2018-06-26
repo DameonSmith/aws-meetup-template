@@ -2,7 +2,7 @@ from troposphere import Template
 from troposphere import ec2
 from troposphere import autoscaling
 from troposphere import elasticloadbalancingv2 as elb
-from troposphere import Ref, GetAtt, FindInMap, GetAZs
+from troposphere import Ref, GetAtt, FindInMap, GetAZs, Base64, Join, Output
 
 
 
@@ -12,7 +12,7 @@ def addMapping(template):
     })
 
 def main():
-    t = Template("A template for trying out DevOps tools.")
+    t = Template("A template to create a load balanced autoscaled nginx flask deployment using ansible.")
 
     addMapping(t)
 
@@ -45,17 +45,26 @@ def main():
     )
 
     # NETWORKING
-    igw = ec2.InternetGateway("internetGateway")
+    igw = ec2.InternetGateway("internetGateway", t)
+
+    gateway_to_internet = ec2.VPCGatewayAttachment(
+        "GatewayToInternet",
+        t,
+        VpcId=vpc_id,
+        InternetGatewayId=Ref(igw)
+    )
+
     route_table = ec2.RouteTable(
         "subnetRouteTable", 
         t,
         VpcId=vpc_id
     )
+
     route_table_id = Ref(route_table)
     internet_route = ec2.Route(
         "routToInternet",
         t,
-        DependsOn=igw,
+        DependsOn=gateway_to_internet,
         DestinationCidrBlock="0.0.0.0/0",
         GatewayId=Ref(igw),
         RouteTableId=route_table_id
@@ -80,7 +89,6 @@ def main():
         "IpProtocol": "tcp",
         "FromPort": 80,
         "ToPort": 80,
-        "VpcId": vpc_id
     }
     ssh_ingress = {
         "CidrIp": "0.0.0.0/0",
@@ -88,7 +96,6 @@ def main():
         "IpProtocol": "tcp",
         "FromPort": 22,
         "ToPort": 22,
-        "VpcId": vpc_id
     }
 
     elb_sg = ec2.SecurityGroup(
@@ -112,7 +119,7 @@ def main():
     elb_sg_id = Ref(elb_sg)
 
     autoscale_ingress = {
-        "SourceSecurityGroupId":Ref(elb_sg_id),
+        "SourceSecurityGroupId": elb_sg_id,
         "Description": "Allow web traffic in from ELB",
         "FromPort": 80,
         "ToPort": 80
@@ -170,6 +177,15 @@ def main():
     )
 
     #TODO: Add user data to install nginx and ansible 
+    lc_user_data = Base64(Join("\n",
+    [
+        "sudo apt-add-repository ppa:ansible/ansible",
+        "sudo apt-get update && sudo apt-get upgrade",
+        "sudo apt-get install git",
+        "sudo apt-get install ansible",
+        "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git"
+    ]))
+
     nginx_launch_config = autoscaling.LaunchConfiguration(
         "webLaunchConfig",
         t,
@@ -179,7 +195,8 @@ def main():
         BlockDeviceMappings= [{
             "DeviceName": "/dev/sdk",
             "Ebs": {"VolumeSize": "10"}
-        }]
+        }],
+        UserData= lc_user_data
     )
 
     nginx_autoscaler = autoscaling.AutoScalingGroup(
@@ -187,8 +204,17 @@ def main():
         LaunchConfigurationName=Ref(nginx_launch_config),
         MinSize="2",
         MaxSize="2",
-        AvailabilityZones=GetAZs("")
+        AvailabilityZones=GetAZs(""),
+        TargetGroupARNs=Ref(nginx_target_group)
     )
+
+    t.add_output([
+        Output(
+            "ALBDNS",
+            Description="The DNS name for the application load balancer.",
+            Value=GetAtt(nginx_elb, "DNSName")
+        )
+    ])
 
     print(t.to_yaml())
 
