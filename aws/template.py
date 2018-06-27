@@ -183,9 +183,9 @@ def main():
     [
         "#!/bin/bash",
         "sudo apt-add-repository ppa:ansible/ansible",
-        "sudo apt-get update && sudo apt-get upgrade",
-        "sudo apt-get install git",
-        "sudo apt-get install ansible",
+        "sudo apt-get update && sudo apt-get upgrade -y",
+        "sudo apt-get install git -y",
+        "sudo apt-get install ansible -y",
         "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git"
     ]))
 
