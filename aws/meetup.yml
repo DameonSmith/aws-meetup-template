@@ -1,0 +1,162 @@
+Description: A template to create a load balanced autoscaled nginx flask deployment
+  using ansible.
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-a4dc46db
+Outputs:
+  ALBDNS:
+    Description: The DNS name for the application load balancer.
+    Value: !GetAtt 'nginxElb.DNSName'
+Resources:
+  DevOpsVPC:
+    Properties:
+      CidrBlock: 10.1.0.0/16
+    Type: AWS::EC2::VPC
+  GatewayToInternet:
+    Properties:
+      InternetGatewayId: !Ref 'internetGateway'
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::VPCGatewayAttachment
+  elbSecurityGroup:
+    Properties:
+      GroupDescription: Allow web traffic in from internet to ELB
+      GroupName: WebGroup
+      SecurityGroupIngress:
+        - CidrIp: '0.0.0.0/0'
+          Description: Allow HTTP traffic in from internet.
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::SecurityGroup
+  internetGateway:
+    Type: AWS::EC2::InternetGateway
+  nginxAutoScaler:
+    Properties:
+      LaunchConfigurationName: !Ref 'webLaunchConfig'
+      MaxSize: '2'
+      MinSize: '2'
+      TargetGroupARNs:
+        - !Ref 'nginxTargetGroup'
+      VPCZoneIdentifier:
+        - !Ref 'privateFlaskSubnet'
+        - !Ref 'publicNginxSubnet'
+    Type: AWS::AutoScaling::AutoScalingGroup
+  nginxAutoscaleSG:
+    Properties:
+      GroupDescription: Allow web traffic in from elb on port 80
+      GroupName: AutoscaleGroup
+      SecurityGroupIngress:
+        - Description: Allow web traffic in from ELB
+          FromPort: 80
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref 'elbSecurityGroup'
+          ToPort: 80
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::SecurityGroup
+  nginxElb:
+    Properties:
+      Name: nginxElb
+      SecurityGroups:
+        - !Ref 'elbSecurityGroup'
+      Subnets:
+        - !Ref 'publicNginxSubnet'
+        - !Ref 'privateFlaskSubnet'
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  nginxListener:
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref 'nginxTargetGroup'
+          Type: forward
+      LoadBalancerArn: !Ref 'nginxElb'
+      Port: 80
+      Protocol: HTTP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  nginxTargetGroup:
+    DependsOn: nginxElb
+    Properties:
+      HealthCheckPath: /health
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: '200'
+      Name: NginxTargetGroup
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  privateFlaskSubnet:
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.1.1.0/24
+      MapPublicIpOnLaunch: 'true'
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::Subnet
+  privateSubnetRouteAssociation:
+    Properties:
+      RouteTableId: !Ref 'subnetRouteTable'
+      SubnetId: !Ref 'privateFlaskSubnet'
+    Type: AWS::EC2::SubnetRouteTableAssociation
+  publicNginxSubnet:
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.1.0.0/24
+      MapPublicIpOnLaunch: 'true'
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::Subnet
+  publicSubnetRouteAssociation:
+    Properties:
+      RouteTableId: !Ref 'subnetRouteTable'
+      SubnetId: !Ref 'publicNginxSubnet'
+    Type: AWS::EC2::SubnetRouteTableAssociation
+  routToInternet:
+    DependsOn: GatewayToInternet
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'internetGateway'
+      RouteTableId: !Ref 'subnetRouteTable'
+    Type: AWS::EC2::Route
+  sshSecurityGroup:
+    Properties:
+      GroupDescription: Allow SSH traffic in from internet
+      GroupName: SSHGroup
+      SecurityGroupIngress:
+        - CidrIp: '0.0.0.0/0'
+          Description: Allow SSH traffic in from internet.
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::SecurityGroup
+  subnetRouteTable:
+    Properties:
+      VpcId: !Ref 'DevOpsVPC'
+    Type: AWS::EC2::RouteTable
+  webLaunchConfig:
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: /dev/sdk
+          Ebs:
+            VolumeSize: '10'
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - AMI
+      InstanceType: t2.micro
+      KeyName: advanced-cfn
+      SecurityGroups:
+        - !Ref 'sshSecurityGroup'
+        - !Ref 'nginxAutoscaleSG'
+      UserData: !Base64
+        Fn::Join:
+          - "\n"
+          - - '#!/bin/bash'
+            - apt-add-repository -y ppa:ansible/ansible
+            - apt-get update && sudo apt-get -y upgrade
+            - apt-get -y install git
+            - apt-get -y install ansible
+            - cd /home/ubuntu/
+            - sudo -H -u ubuntu bash -c 'export LC_ALL=C.UTF-8 && export LANG=C.UTF-8 && ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git --extra-vars "user=ubuntu"'
+    Type: AWS::AutoScaling::LaunchConfiguration
+

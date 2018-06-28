@@ -178,15 +178,19 @@ def main():
         Protocol="HTTP"
     )
 
-    #TODO: Add user data to install nginx and ansible 
+    # Everything after su -u ubuntu is one command
     lc_user_data = Base64(Join("\n",
     [
         "#!/bin/bash",
-        "sudo apt-add-repository ppa:ansible/ansible",
-        "sudo apt-get update && sudo apt-get -y upgrade",
-        "sudo apt-get -y install git",
-        "sudo apt-get -y install ansible",
-        "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git"
+        "apt-add-repository -y ppa:ansible/ansible",
+        "apt-get update && sudo apt-get -y upgrade",
+        "apt-get -y install git",
+        "apt-get -y install ansible",
+        "cd /home/ubuntu/",
+        "sudo -H -u ubuntu bash -c '"
+        "export LC_ALL=C.UTF-8 && "
+        "export LANG=C.UTF-8 && "
+        "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git --extra-vars \"user=ubuntu\"'"
     ]))
 
     nginx_launch_config = autoscaling.LaunchConfiguration(
