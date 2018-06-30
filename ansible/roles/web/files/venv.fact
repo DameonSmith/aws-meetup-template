@@ -1,4 +1,0 @@
-#!/bin/bash
-cd ~
-VENV=pipenv --venv
-echo '{"path": "${VENV}"}'
