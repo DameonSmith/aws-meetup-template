@@ -1,1 +1,1 @@
-# devops-demo
+# An Example Cloud Formation Template for Creating a Loadbalanced and Autoscaled Web Server
