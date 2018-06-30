@@ -12,12 +12,13 @@ def addMapping(template):
     })
 
 def main():
-    t = Template("A template to create a load balanced autoscaled nginx flask deployment using ansible.")
+    t = Template("A template to create a load balanced autoscaled Web flask deployment using ansible.")
 
     addMapping(t)
 
+    ### VPC CONFIGURATION ###
     vpc = ec2.VPC(
-        "DevOpsVPC", 
+        "MainVPC", 
         CidrBlock="10.1.0.0/16"
     )
 
@@ -25,27 +26,27 @@ def main():
 
     vpc_id = Ref(vpc)
 
-    pub_subnet = ec2.Subnet(
-        "publicNginxSubnet", 
+    subnet_1 = ec2.Subnet(
+        "WebAppSubnet1", 
         t, 
         AvailabilityZone="us-east-1a",
         CidrBlock="10.1.0.0/24",
         MapPublicIpOnLaunch=True,
         VpcId=vpc_id,
     )
-    pub_subnet_id = Ref(pub_subnet)
+    subnet_1_id = Ref(subnet_1)
 
-    priv_subnet = ec2.Subnet(
-        "privateFlaskSubnet", 
+    subnet_2 = ec2.Subnet(
+        "WebAppSubnet2", 
         t,
         AvailabilityZone="us-east-1b",
         CidrBlock="10.1.1.0/24",
         MapPublicIpOnLaunch=True,
         VpcId=vpc_id,
     )
-    priv_subnet_id = Ref(priv_subnet)
+    subnet_2_id = Ref(subnet_2)
 
-    # NETWORKING
+    ### NETWORKING ###
     igw = ec2.InternetGateway("internetGateway", t)
 
     gateway_to_internet = ec2.VPCGatewayAttachment(
@@ -63,25 +64,24 @@ def main():
 
     route_table_id = Ref(route_table)
     internet_route = ec2.Route(
-        "routToInternet",
+        "routeToInternet",
         t,
         DependsOn=gateway_to_internet,
         DestinationCidrBlock="0.0.0.0/0",
         GatewayId=Ref(igw),
         RouteTableId=route_table_id
     )
-
-    priv_subnet_route_assoc = ec2.SubnetRouteTableAssociation(
-        "privateSubnetRouteAssociation",
+    subnet_1_route_assoc = ec2.SubnetRouteTableAssociation(
+        "Subnet1RouteAssociation",
         t,
         RouteTableId=route_table_id,
-        SubnetId=Ref(priv_subnet)
+        SubnetId=Ref(subnet_1)
     )
-    pub_subnet_route_assoc = ec2.SubnetRouteTableAssociation(
-        "publicSubnetRouteAssociation",
+    subnet_2_route_assoc = ec2.SubnetRouteTableAssociation(
+        "Subnet2RouteAssociation",
         t,
         RouteTableId=route_table_id,
-        SubnetId=Ref(pub_subnet)
+        SubnetId=Ref(subnet_2)
     )
 
     http_ingress = {
@@ -118,8 +118,8 @@ def main():
             ssh_ingress
         ]
     )
-    ssh_sg_id = Ref(ssh_sg)
     elb_sg_id = Ref(elb_sg)
+    ssh_sg_id = Ref(ssh_sg)
 
     autoscale_ingress = {
         "SourceSecurityGroupId": elb_sg_id,
@@ -129,7 +129,7 @@ def main():
         "ToPort": 80
     }
     autoscale_sg = ec2.SecurityGroup(
-        "nginxAutoscaleSG",
+        "WebAutoscaleSG",
         t,
         GroupName="AutoscaleGroup",
         GroupDescription="Allow web traffic in from elb on port 80",
@@ -140,20 +140,19 @@ def main():
     )
     autoscale_sg_id = Ref(autoscale_sg)
 
-
-
-    nginx_elb = elb.LoadBalancer(
-        "nginxElb",
+    ### LOAD BALANCING ###
+    Web_elb = elb.LoadBalancer(
+        "WebElb",
         t,
-        Name="nginxElb",
-        Subnets=[pub_subnet_id, priv_subnet_id],
+        Name="WebElb",
+        Subnets=[subnet_1_id, subnet_2_id],
         SecurityGroups=[elb_sg_id]
     )
 
-    nginx_target_group = elb.TargetGroup(
-        "nginxTargetGroup", 
+    Web_target_group = elb.TargetGroup(
+        "WebTargetGroup", 
         t,
-        DependsOn=nginx_elb,
+        DependsOn=Web_elb,
         HealthCheckPath="/health",
         HealthCheckPort=80,
         HealthCheckProtocol="HTTP",
@@ -164,13 +163,13 @@ def main():
         VpcId=vpc_id
     )
 
-    nginx_listener = elb.Listener(
-        "nginxListener",
+    Web_listener = elb.Listener(
+        "WebListener",
         t,
-        LoadBalancerArn=Ref(nginx_elb),
+        LoadBalancerArn=Ref(Web_elb),
         DefaultActions=[
             elb.Action("forwardAction",
-                TargetGroupArn=Ref(nginx_target_group),
+                TargetGroupArn=Ref(Web_target_group),
                 Type="forward"
             )
         ],
@@ -178,7 +177,10 @@ def main():
         Protocol="HTTP"
     )
 
-    # Everything after su -u ubuntu is one command
+    ### AUTOSCALING ###
+    # Everything after sudo -u ubuntu is one command
+    # The sudo command is required to properly set file permissions when
+    # running the ansible script as it assumes running from non root user
     lc_user_data = Base64(Join("\n",
     [
         "#!/bin/bash",
@@ -193,7 +195,7 @@ def main():
         "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git --extra-vars \"user=ubuntu\"'"
     ]))
 
-    nginx_launch_config = autoscaling.LaunchConfiguration(
+    Web_launch_config = autoscaling.LaunchConfiguration(
         "webLaunchConfig",
         t,
         ImageId=FindInMap("RegionMap", Ref("AWS::Region"), "AMI"), #TODO: Remove magic string
@@ -207,21 +209,21 @@ def main():
         KeyName="advanced-cfn"
     )
 
-    nginx_autoscaler = autoscaling.AutoScalingGroup(
-        "nginxAutoScaler",
+    Web_autoscaler = autoscaling.AutoScalingGroup(
+        "WebAutoScaler",
         t,
-        LaunchConfigurationName=Ref(nginx_launch_config),
+        LaunchConfigurationName=Ref(Web_launch_config),
         MinSize="2",
         MaxSize="2",
-        VPCZoneIdentifier=[priv_subnet_id, pub_subnet_id],
-        TargetGroupARNs= [Ref(nginx_target_group)]
+        VPCZoneIdentifier=[subnet_2_id, subnet_1_id],
+        TargetGroupARNs= [Ref(Web_target_group)]
     )
 
     t.add_output([
         Output(
             "ALBDNS",
             Description="The DNS name for the application load balancer.",
-            Value=GetAtt(nginx_elb, "DNSName")
+            Value=GetAtt(Web_elb, "DNSName")
         )
     ])
 
