@@ -402,7 +402,7 @@ def main():
             Image="aws/codebuild/python:3.6.5",
             Type="LINUX_CONTAINER",
         ),
-        ServiceRole=Ref(codebuild_service_role),
+        ServiceRole=GetAtt(codebuild_service_role, 'Arn'),
         Source=codebuild.Source(
             "CMSSourceCode",
             Auth=codebuild.SourceAuth(
@@ -504,20 +504,6 @@ def main():
         DependsOn=[cms_codedeploy_application],
         ApplicationName=Ref(cms_codedeploy_application),
         AutoScalingGroups=[Ref(Web_autoscaler)],
-        Deployment=codedeploy.Deployment(
-            "Deployment",
-            Description="The Deployment for CMS Application",
-            Revision=codedeploy.Revision(
-                "DeployRevision",
-                RevisionType="S3",
-                S3Location=codedeploy.S3Location(
-                    "CMSRevisionS3Location",
-                    Bucket=Ref(app_bucket),
-                    BundleType="zip",
-                    Key=Ref(artifact_key)
-                )
-            )
-        ),
         LoadBalancerInfo=codedeploy.LoadBalancerInfo(
             "CodeDeployLBInfo",
             TargetGroupInfoList=[
