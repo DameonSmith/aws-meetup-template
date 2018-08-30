@@ -8,7 +8,146 @@ Outputs:
   ALBDNS:
     Description: The DNS name for the application load balancer.
     Value: !GetAtt 'WebElb.DNSName'
+Parameters:
+  ArtifactKey:
+    Description: The key for the artifact that codebuild creates.
+    Type: String
+  GithubRepoLink:
+    Description: Name of the repository you wish to connect to codebuild.
+    Type: String
 Resources:
+  CMSBuild:
+    Properties:
+      Artifacts:
+        Location: !Ref 'CodeDeployApplicationBucket'
+        Name: !Ref 'ArtifactKey'
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
+        Type: S3
+      Description: Code build for CMS
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/python:3.6.5
+        Type: LINUX_CONTAINER
+      Name: CMS-Build
+      ServiceRole: !Ref 'CMSCodeBuildServiceRole'
+      Source:
+        Auth:
+          Type: OAUTH
+        Location: !Ref 'GithubRepoLink'
+        Type: GITHUB
+      Triggers:
+        Webhook: 'true'
+    Type: AWS::CodeBuild::Project
+  CMSCodeBuildServiceRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  - '*'
+                Sid: logs
+            Version: '2012-10-17'
+          PolicyName: CloudWatchLogsPolicy
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                Effect: Allow
+                Resource:
+                  - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                Sid: codebuilder
+            Version: '2012-10-17'
+          PolicyName: s3AccessPolicy
+    Type: AWS::IAM::Role
+  CMSCodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+  CMSDeploymentGroup:
+    DependsOn:
+      - CMSCodeDeployApplication
+    Properties:
+      ApplicationName: !Ref 'CMSCodeDeployApplication'
+      AutoScalingGroups:
+        - !Ref 'WebAutoScaler'
+      Deployment:
+        Description: The Deployment for CMS Application
+        Revision:
+          RevisionType: S3
+          S3Location:
+            Bucket: !Ref 'CodeDeployApplicationBucket'
+            BundleType: zip
+            Key: !Ref 'ArtifactKey'
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !GetAtt 'WebTargetGroup.TargetGroupName'
+      ServiceRoleArn: !GetAtt 'CMSDeploymentGroupServiceRole.Arn'
+    Type: AWS::CodeDeploy::DeploymentGroup
+  CMSDeploymentGroupServiceRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  - '*'
+                Sid: logs
+            Version: '2012-10-17'
+          PolicyName: CloudWatchLogsPolicy
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                Effect: Allow
+                Resource:
+                  - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                Sid: codebuilder
+            Version: '2012-10-17'
+          PolicyName: s3AccessPolicy
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - autoscaling:*
+                  - elasticloadbalancing:*
+                Effect: Allow
+                Resource:
+                  - '*'
+                Sid: codebuilder
+            Version: '2012-10-17'
+          PolicyName: autoscalingAccess
+    Type: AWS::IAM::Role
+  CodeDeployApplicationBucket:
+    Type: AWS::S3::Bucket
   GatewayToInternet:
     Properties:
       InternetGatewayId: !Ref 'internetGateway'
@@ -133,12 +272,68 @@ Resources:
     Properties:
       VpcId: !Ref 'MainVPC'
     Type: AWS::EC2::RouteTable
+  webInstanceCodeDeployRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                  - s3:ListObjects
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                  - s3:ListAllMyBuckets
+                  - s3:ListMultipartUploadParts
+                  - s3:ListBucketMultipartUploads
+                  - s3:ListBucketByTags
+                Effect: Allow
+                Resource:
+                  - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                  - !Join
+                    - ''
+                    - - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                      - /*
+                  - arn:aws:s3:::aws-codedeploy-us-east-2/*
+                  - arn:aws:s3:::aws-codedeploy-us-east-1/*
+                  - arn:aws:s3:::aws-codedeploy-us-west-1/*
+                  - arn:aws:s3:::aws-codedeploy-us-west-2/*
+                  - arn:aws:s3:::aws-codedeploy-ca-central-1/*
+                  - arn:aws:s3:::aws-codedeploy-eu-west-1/*
+                  - arn:aws:s3:::aws-codedeploy-eu-west-2/*
+                  - arn:aws:s3:::aws-codedeploy-eu-west-3/*
+                  - arn:aws:s3:::aws-codedeploy-eu-central-1/*
+                  - arn:aws:s3:::aws-codedeploy-ap-northeast-1/*
+                  - arn:aws:s3:::aws-codedeploy-ap-northeast-2/*
+                  - arn:aws:s3:::aws-codedeploy-ap-southeast-1/*
+                  - arn:aws:s3:::aws-codedeploy-ap-southeast-2/*
+                  - arn:aws:s3:::aws-codedeploy-ap-south-1/*
+                  - arn:aws:s3:::aws-codedeploy-sa-east-1/*
+                Sid: CodeDeployS3
+            Version: '2012-10-17'
+          PolicyName: CodeDeployS3Policy
+    Type: AWS::IAM::Role
+  webInstanceProfile:
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'webInstanceCodeDeployRole'
+    Type: AWS::IAM::InstanceProfile
   webLaunchConfig:
     Properties:
       BlockDeviceMappings:
         - DeviceName: /dev/sdk
           Ebs:
             VolumeSize: '10'
+      IamInstanceProfile: !Ref 'webInstanceProfile'
       ImageId: !FindInMap
         - RegionMap
         - !Ref 'AWS::Region'

@@ -1,9 +1,16 @@
 from troposphere import Template
 from troposphere import ec2
 from troposphere import autoscaling
-from troposphere import codebuild, codeploy
+from troposphere import s3
+from troposphere import codebuild, codedeploy
+from troposphere import iam
 from troposphere import elasticloadbalancingv2 as elb
-from troposphere import Ref, GetAtt, FindInMap, GetAZs, Base64, Join, Output
+from troposphere import Ref, GetAtt, FindInMap, GetAZs, Base64, Join, Output, Parameter
+from awacs import aws
+from awacs import logs as aws_logs
+from awacs import s3 as aws_s3
+from awacs import autoscaling as aws_autoscaling
+
 
 
 def addMapping(template):
@@ -140,11 +147,17 @@ def main():
     )
     autoscale_sg_id = Ref(autoscale_sg)
 
+    # BUCKETS
+    app_bucket = s3.Bucket(
+        "CodeDeployApplicationBucket",
+        t,
+    )
+
     ### LOAD BALANCING ###
     Web_elb = elb.LoadBalancer(
         "WebElb",
         t,
-        Name="WebElb",
+        Name="WebElb", # TODO: Fix for name conflict
         Subnets=[subnet_1_id, subnet_2_id],
         SecurityGroups=[elb_sg_id]
     )
@@ -163,7 +176,7 @@ def main():
         VpcId=vpc_id
     )
 
-    Web_listener = elb.Listener
+    Web_listener = elb.Listener(
         "WebListener",
         t,
         LoadBalancerArn=Ref(Web_elb),
@@ -195,18 +208,89 @@ def main():
         "ansible-pull -U https://github.com/DameonSmith/aws-meetup-ansible.git --extra-vars \"user=ubuntu\"'"
     ]))
 
+    web_instance_role = iam.Role(
+        "webInstanceCodeDeployRole",
+        t,
+        AssumeRolePolicyDocument={
+            'Statement': [{
+                'Effect': 'Allow',
+                'Principal': {
+                    'Service': 'ec2.amazonaws.com'
+                },
+                'Action': 'sts:AssumeRole'
+            }]
+        },
+        Policies=[
+            iam.Policy(
+                PolicyName="CodeDeployS3Policy",
+                PolicyDocument=aws.Policy(
+                    Version='2012-10-17',
+                    Statement=[
+                        aws.Statement(
+                            Sid='CodeDeployS3',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws_s3.PutObject,
+                                aws_s3.GetObject,
+                                aws_s3.GetObjectVersion,
+                                aws_s3.DeleteObject,
+                                aws_s3.ListObjects,
+                                aws_s3.ListBucket,
+                                aws_s3.ListBucketVersions,
+                                aws_s3.ListAllMyBuckets,
+                                aws_s3.ListMultipartUploadParts,
+                                aws_s3.ListBucketMultipartUploads,
+                                aws_s3.ListBucketByTags,
+                            ],
+                            Resource=[
+                                GetAtt(app_bucket, 'Arn'),
+                                Join('', [
+                                    GetAtt(app_bucket, 'Arn'),
+                                    '/*',
+                                ]),
+                                "arn:aws:s3:::aws-codedeploy-us-east-2/*",
+                                "arn:aws:s3:::aws-codedeploy-us-east-1/*",
+                                "arn:aws:s3:::aws-codedeploy-us-west-1/*",
+                                "arn:aws:s3:::aws-codedeploy-us-west-2/*",
+                                "arn:aws:s3:::aws-codedeploy-ca-central-1/*",
+                                "arn:aws:s3:::aws-codedeploy-eu-west-1/*",
+                                "arn:aws:s3:::aws-codedeploy-eu-west-2/*",
+                                "arn:aws:s3:::aws-codedeploy-eu-west-3/*",
+                                "arn:aws:s3:::aws-codedeploy-eu-central-1/*",
+                                "arn:aws:s3:::aws-codedeploy-ap-northeast-1/*",
+                                "arn:aws:s3:::aws-codedeploy-ap-northeast-2/*",
+                                "arn:aws:s3:::aws-codedeploy-ap-southeast-1/*",
+                                "arn:aws:s3:::aws-codedeploy-ap-southeast-2/*",
+                                "arn:aws:s3:::aws-codedeploy-ap-south-1/*",
+                                "arn:aws:s3:::aws-codedeploy-sa-east-1/*",
+                            ]
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+    web_instance_profile = iam.InstanceProfile(
+        "webInstanceProfile",
+        t,
+        Path='/',
+        Roles=[Ref(web_instance_role)],
+    )
+
     Web_launch_config = autoscaling.LaunchConfiguration(
         "webLaunchConfig",
         t,
         ImageId=FindInMap("RegionMap", Ref("AWS::Region"), "AMI"), # TODO: Remove magic string
         SecurityGroups=[ssh_sg_id, autoscale_sg_id],
+        IamInstanceProfile=Ref(web_instance_profile),
         InstanceType="t2.micro",
         BlockDeviceMappings= [{
             "DeviceName": "/dev/sdk",
             "Ebs": {"VolumeSize": "10"}
         }],
         UserData= lc_user_data,
-        KeyName="advanced-cfn"
+        KeyName="advanced-cfn",
     )
 
     Web_autoscaler = autoscaling.AutoScalingGroup(
@@ -275,7 +359,7 @@ def main():
                                 aws_s3.DeleteObject
                             ],
                             Resource=[
-                                GetAtt(buckets.application_bucket, 'Arn')
+                                GetAtt(app_bucket, 'Arn')
                             ]
                         )
                     ]
@@ -287,17 +371,18 @@ def main():
 
     github_repo = Parameter(
         "GithubRepoLink",
-        t,
         Description="Name of the repository you wish to connect to codebuild.",
         Type="String"
     )
 
     artifact_key = Parameter(
         "ArtifactKey",
-        t,
         Description="The key for the artifact that codebuild creates.",
         Type="String"
     )
+
+    t.add_parameter(github_repo)
+    t.add_parameter(artifact_key)
 
 
     cms_code_build_project = codebuild.Project(
@@ -305,7 +390,7 @@ def main():
         t,
         Name="CMS-Build",
         Artifacts=codebuild.Artifacts(
-            Location=Ref(buckets.application_bucket),
+            Location=Ref(app_bucket),
             Name=Ref(artifact_key),
             NamespaceType="BUILD_ID",
             Type="S3",
@@ -379,7 +464,26 @@ def main():
                                 aws_s3.DeleteObject
                             ],
                             Resource=[
-                                GetAtt(buckets.application_bucket, 'Arn')
+                                GetAtt(app_bucket, 'Arn')
+                            ]
+                        )
+                    ]
+                )
+            ),
+            iam.Policy(
+                PolicyName="autoscalingAccess",
+                PolicyDocument=aws.Policy(
+                    Version="2012-10-17",
+                    Statement=[
+                        aws.Statement(
+                            Sid='codebuilder',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws.Action('autoscaling', '*'),
+                                aws.Action('elasticloadbalancing', '*')
+                            ],
+                            Resource=[
+                                '*'
                             ]
                         )
                     ]
@@ -399,31 +503,31 @@ def main():
         t,
         DependsOn=[cms_codedeploy_application],
         ApplicationName=Ref(cms_codedeploy_application),
-        AutoScalingGroups=[Ref(autoscaler.web_autoscaler)],
+        AutoScalingGroups=[Ref(Web_autoscaler)],
         Deployment=codedeploy.Deployment(
-            "CMSDeployment",
+            "Deployment",
             Description="The Deployment for CMS Application",
             Revision=codedeploy.Revision(
-                "CMSDeployRevision",
+                "DeployRevision",
                 RevisionType="S3",
                 S3Location=codedeploy.S3Location(
                     "CMSRevisionS3Location",
-                    Bucket=Ref(buckets.application_bucket),
+                    Bucket=Ref(app_bucket),
                     BundleType="zip",
-                    Key=Ref(artifact_key) #FIXME: make a parameter
+                    Key=Ref(artifact_key)
                 )
             )
         ),
         LoadBalancerInfo=codedeploy.LoadBalancerInfo(
-            "CMSCodeDeployLBInfo",
+            "CodeDeployLBInfo",
             TargetGroupInfoList=[
                     codedeploy.TargetGroupInfoList(
-                        "CMSTargetGroupInfo",
-                       Name=GetAtt(alb.web_target_group, "TargetGroupName")
+                        "WebTargetGroup",
+                       Name=GetAtt(Web_target_group, "TargetGroupName")
                     )
             ]
         ),
-        ServiceRoleArn=Ref(codedeploy_service_role)
+        ServiceRoleArn=GetAtt(codedeploy_service_role, 'Arn')
     )
 
     print(t.to_yaml())

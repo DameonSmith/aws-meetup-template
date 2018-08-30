@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 troposphere = "*"
+awacs = "*"
 
 [dev-packages]
 pylint = "*"
