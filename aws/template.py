@@ -5,7 +5,6 @@ from troposphere import elasticloadbalancingv2 as elb
 from troposphere import Ref, GetAtt, FindInMap, GetAZs, Base64, Join, Output
 
 
-
 def addMapping(template):
     template.add_mapping("RegionMap", {
         "us-east-1": {"AMI": "ami-a4dc46db"},
@@ -18,7 +17,7 @@ def main():
 
     ### VPC CONFIGURATION ###
     vpc = ec2.VPC(
-        "MainVPC", 
+        "MainVPC",
         CidrBlock="10.1.0.0/16"
     )
 
@@ -27,8 +26,8 @@ def main():
     vpc_id = Ref(vpc)
 
     subnet_1 = ec2.Subnet(
-        "WebAppSubnet1", 
-        t, 
+        "WebAppSubnet1",
+        t,
         AvailabilityZone="us-east-1a",
         CidrBlock="10.1.0.0/24",
         MapPublicIpOnLaunch=True,
@@ -37,7 +36,7 @@ def main():
     subnet_1_id = Ref(subnet_1)
 
     subnet_2 = ec2.Subnet(
-        "WebAppSubnet2", 
+        "WebAppSubnet2",
         t,
         AvailabilityZone="us-east-1b",
         CidrBlock="10.1.1.0/24",
@@ -57,7 +56,7 @@ def main():
     )
 
     route_table = ec2.RouteTable(
-        "subnetRouteTable", 
+        "subnetRouteTable",
         t,
         VpcId=vpc_id
     )
@@ -100,7 +99,7 @@ def main():
     }
 
     elb_sg = ec2.SecurityGroup(
-        "elbSecurityGroup", 
+        "elbSecurityGroup",
         t,
         GroupName="WebGroup",
         GroupDescription="Allow web traffic in from internet to ELB",
@@ -150,7 +149,7 @@ def main():
     )
 
     Web_target_group = elb.TargetGroup(
-        "WebTargetGroup", 
+        "WebTargetGroup",
         t,
         DependsOn=Web_elb,
         HealthCheckPath="/health",
@@ -163,7 +162,7 @@ def main():
         VpcId=vpc_id
     )
 
-    Web_listener = elb.Listener(
+    Web_listener = elb.Listener
         "WebListener",
         t,
         LoadBalancerArn=Ref(Web_elb),
@@ -198,7 +197,7 @@ def main():
     Web_launch_config = autoscaling.LaunchConfiguration(
         "webLaunchConfig",
         t,
-        ImageId=FindInMap("RegionMap", Ref("AWS::Region"), "AMI"), #TODO: Remove magic string
+        ImageId=FindInMap("RegionMap", Ref("AWS::Region"), "AMI"), # TODO: Remove magic string
         SecurityGroups=[ssh_sg_id, autoscale_sg_id],
         InstanceType="t2.micro",
         BlockDeviceMappings= [{
@@ -226,6 +225,9 @@ def main():
             Value=GetAtt(Web_elb, "DNSName")
         )
     ])
+
+
+    # DEVTOOLS CONFIG
 
     print(t.to_yaml())
 
