@@ -1,6 +1,7 @@
 from troposphere import Template
 from troposphere import ec2
 from troposphere import autoscaling
+from troposphere import codebuild, codeploy
 from troposphere import elasticloadbalancingv2 as elb
 from troposphere import Ref, GetAtt, FindInMap, GetAZs, Base64, Join, Output
 
@@ -212,7 +213,7 @@ def main():
         "WebAutoScaler",
         t,
         LaunchConfigurationName=Ref(Web_launch_config),
-        MinSize="2",
+        MinSize="2", # TODO: Change to parameter
         MaxSize="2",
         VPCZoneIdentifier=[subnet_2_id, subnet_1_id],
         TargetGroupARNs= [Ref(Web_target_group)]
@@ -228,6 +229,202 @@ def main():
 
 
     # DEVTOOLS CONFIG
+    codebuild_service_role = iam.Role(
+        "CMSCodeBuildServiceRole",
+        t,
+        AssumeRolePolicyDocument={
+            'Statement': [{
+                'Effect': 'Allow',
+                'Principal': {
+                    'Service': ['codebuild.amazonaws.com']
+                },
+                'Action': ['sts:AssumeRole']
+            }]
+        },
+        Policies=[
+            iam.Policy(
+                PolicyName="CloudWatchLogsPolicy",
+                PolicyDocument=aws.Policy(
+                    Version="2012-10-17",
+                    Statement=[
+                        aws.Statement(
+                            Sid='logs',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws_logs.CreateLogGroup,
+                                aws_logs.CreateLogStream,
+                                aws_logs.PutLogEvents
+                            ],
+                            Resource=['*']
+                        )
+                    ]
+                )
+            ),
+            iam.Policy(
+                PolicyName="s3AccessPolicy",
+                PolicyDocument=aws.Policy(
+                    Version="2012-10-17",
+                    Statement=[
+                        aws.Statement(
+                            Sid='codebuilder',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws_s3.PutObject,
+                                aws_s3.GetObject,
+                                aws_s3.GetObjectVersion,
+                                aws_s3.DeleteObject
+                            ],
+                            Resource=[
+                                GetAtt(buckets.application_bucket, 'Arn')
+                            ]
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+
+    github_repo = Parameter(
+        "GithubRepoLink",
+        t,
+        Description="Name of the repository you wish to connect to codebuild.",
+        Type="String"
+    )
+
+    artifact_key = Parameter(
+        "ArtifactKey",
+        t,
+        Description="The key for the artifact that codebuild creates.",
+        Type="String"
+    )
+
+
+    cms_code_build_project = codebuild.Project(
+        "CMSBuild",
+        t,
+        Name="CMS-Build",
+        Artifacts=codebuild.Artifacts(
+            Location=Ref(buckets.application_bucket),
+            Name=Ref(artifact_key),
+            NamespaceType="BUILD_ID",
+            Type="S3",
+            Packaging="ZIP"
+        ),
+        Description="Code build for CMS",
+        Environment=codebuild.Environment(
+            ComputeType="BUILD_GENERAL1_SMALL",
+            Image="aws/codebuild/python:3.6.5",
+            Type="LINUX_CONTAINER",
+        ),
+        ServiceRole=Ref(codebuild_service_role),
+        Source=codebuild.Source(
+            "CMSSourceCode",
+            Auth=codebuild.SourceAuth(
+                "GitHubAuth",
+                Type="OAUTH"
+            ),
+            Location=Ref(github_repo),
+            Type="GITHUB"
+        ),
+        Triggers=codebuild.ProjectTriggers(
+            Webhook=True
+        )
+    )
+
+
+    codedeploy_service_role = iam.Role(
+        "CMSDeploymentGroupServiceRole",
+        t,
+        AssumeRolePolicyDocument={
+            'Statement': [{
+                'Effect': 'Allow',
+                'Principal': {
+                    'Service': ['codedeploy.amazonaws.com']
+                },
+                'Action': ['sts:AssumeRole']
+            }]
+        },
+        Policies=[
+            iam.Policy(
+                PolicyName="CloudWatchLogsPolicy",
+                PolicyDocument=aws.Policy(
+                    Version="2012-10-17",
+                    Statement=[
+                        aws.Statement(
+                            Sid='logs',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws_logs.CreateLogGroup,
+                                aws_logs.CreateLogStream,
+                                aws_logs.PutLogEvents
+                            ],
+                            Resource=['*']
+                        )
+                    ]
+                )
+            ),
+            iam.Policy(
+                PolicyName="s3AccessPolicy",
+                PolicyDocument=aws.Policy(
+                    Version="2012-10-17",
+                    Statement=[
+                        aws.Statement(
+                            Sid='codebuilder',
+                            Effect=aws.Allow,
+                            Action=[
+                                aws_s3.PutObject,
+                                aws_s3.GetObject,
+                                aws_s3.GetObjectVersion,
+                                aws_s3.DeleteObject
+                            ],
+                            Resource=[
+                                GetAtt(buckets.application_bucket, 'Arn')
+                            ]
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+    cms_codedeploy_application = codedeploy.Application(
+        "CMSCodeDeployApplication",
+        t,
+    )
+
+
+    cms_deployment_group = codedeploy.DeploymentGroup(
+        "CMSDeploymentGroup",
+        t,
+        DependsOn=[cms_codedeploy_application],
+        ApplicationName=Ref(cms_codedeploy_application),
+        AutoScalingGroups=[Ref(autoscaler.web_autoscaler)],
+        Deployment=codedeploy.Deployment(
+            "CMSDeployment",
+            Description="The Deployment for CMS Application",
+            Revision=codedeploy.Revision(
+                "CMSDeployRevision",
+                RevisionType="S3",
+                S3Location=codedeploy.S3Location(
+                    "CMSRevisionS3Location",
+                    Bucket=Ref(buckets.application_bucket),
+                    BundleType="zip",
+                    Key=Ref(artifact_key) #FIXME: make a parameter
+                )
+            )
+        ),
+        LoadBalancerInfo=codedeploy.LoadBalancerInfo(
+            "CMSCodeDeployLBInfo",
+            TargetGroupInfoList=[
+                    codedeploy.TargetGroupInfoList(
+                        "CMSTargetGroupInfo",
+                       Name=GetAtt(alb.web_target_group, "TargetGroupName")
+                    )
+            ]
+        ),
+        ServiceRoleArn=Ref(codedeploy_service_role)
+    )
 
     print(t.to_yaml())
 
