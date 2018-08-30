@@ -359,7 +359,11 @@ def main():
                                 aws_s3.DeleteObject
                             ],
                             Resource=[
-                                GetAtt(app_bucket, 'Arn')
+                                GetAtt(app_bucket, 'Arn'),
+                                Join('', [
+                                    GetAtt(app_bucket, 'Arn'),
+                                    '/*',
+                                ])
                             ]
                         )
                     ]
@@ -464,7 +468,11 @@ def main():
                                 aws_s3.DeleteObject
                             ],
                             Resource=[
-                                GetAtt(app_bucket, 'Arn')
+                                GetAtt(app_bucket, 'Arn'),
+                                Join('', [
+                                    GetAtt(app_bucket, 'Arn'),
+                                    '/*'
+                                ])
                             ]
                         )
                     ]

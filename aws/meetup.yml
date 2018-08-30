@@ -30,7 +30,7 @@ Resources:
         Image: aws/codebuild/python:3.6.5
         Type: LINUX_CONTAINER
       Name: CMS-Build
-      ServiceRole: !Ref 'CMSCodeBuildServiceRole'
+      ServiceRole: !GetAtt 'CMSCodeBuildServiceRole.Arn'
       Source:
         Auth:
           Type: OAUTH
@@ -72,6 +72,10 @@ Resources:
                 Effect: Allow
                 Resource:
                   - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                  - !Join
+                    - ''
+                    - - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                      - /*
                 Sid: codebuilder
             Version: '2012-10-17'
           PolicyName: s3AccessPolicy
@@ -85,14 +89,6 @@ Resources:
       ApplicationName: !Ref 'CMSCodeDeployApplication'
       AutoScalingGroups:
         - !Ref 'WebAutoScaler'
-      Deployment:
-        Description: The Deployment for CMS Application
-        Revision:
-          RevisionType: S3
-          S3Location:
-            Bucket: !Ref 'CodeDeployApplicationBucket'
-            BundleType: zip
-            Key: !Ref 'ArtifactKey'
       LoadBalancerInfo:
         TargetGroupInfoList:
           - Name: !GetAtt 'WebTargetGroup.TargetGroupName'
@@ -131,6 +127,10 @@ Resources:
                 Effect: Allow
                 Resource:
                   - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                  - !Join
+                    - ''
+                    - - !GetAtt 'CodeDeployApplicationBucket.Arn'
+                      - /*
                 Sid: codebuilder
             Version: '2012-10-17'
           PolicyName: s3AccessPolicy
